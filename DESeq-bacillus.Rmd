@@ -1,0 +1,259 @@
+Links for original code sources are indicated when needed.
+
+This code allows analysis of transcriptomics data (a table of gene counts per sample), resulting in a list of differentially expressed genes (DEGs). From these lists, volcano plots and Euler diagrams were created.
+
+### DATA PREPARATION ###
+
+```{r}
+setwd("C:/Users/harri/Desktop/bacillus-transcriptomics")
+```
+
+Install packages
+```{r}
+#install.packages("BiocManager")
+#BiocManager::install("DESeq2")
+```
+
+Load the library
+```{r}
+library(DESeq2)
+```
+
+Import data and sample description file (.csv)
+```{r}
+library(readr)
+
+merged_gene_abundance <- read.csv("~/Transcriptomics/bacillus-transcriptomics/merged_gene_abundance.csv", sep=";")  #if doesn't work From Text (base) > change row names to First column
+sample_counts <- merged_gene_abundance
+
+info_table <- read_delim("info-table.csv", delim = ";", escape_double = FALSE, trim_ws = TRUE)
+sample_info <- info_table
+
+```
+
+Convert the column from characters to factors (required by DESeq)
+```{r}
+sample_info$Type <- factor(sample_info$Type)
+```
+
+Set up the dds object
+```{r}
+sample_dds <- DESeqDataSetFromMatrix(countData = sample_counts,
+                                     colData = sample_info,
+                                     design = ~Type
+                                     )
+```
+
+### RUN DESEQ ###
+
+```{r}
+sample_dds <- DESeq(sample_dds)
+```
+
+Quality control: Principle Components Analysis w/ regularized log transformation (rlog)
+
+```{r}
+rld <- rlog(sample_dds, blind=TRUE)
+plotPCA(rld, intgroup="Type") + geom_text(aes(label=name))
+```
+
+
+Check result. Differential expression is comparing between two conditions as described in InfoTable. (miRNA VS SCRB)
+
+Start by comparing at 20 min
+```{r}
+sample_res <- results(sample_dds, contrast = c("Type", "mir-20", "scrb-20")) #last charact vect = base level
+```
+
+Save the results to a table
+```{r}
+res <- data.frame(sample_res)
+res_20 <- summary(res)
+
+library(readxl)
+annotations <- read_excel("D:/Home/hmiddleton/Documents/Transcriptomics/resultats_bruts_transcripto/bacillus_genome123/export/annotations.xlsx")
+res_gene <- merge(x=res, y=annotations, by.x=0, by.y="gene_id")
+
+write.table(res_gene, "DESeq-results-20min-bacillus_bis.txt")
+```
+
+Filtering to find significant genes using padj cutoff of 0.05
+```{r}
+padj.cutoff <- 0.05 
+significant_results <- res_gene[which(res_gene$padj < padj.cutoff),]
+```
+
+Save results using customized file_name
+```{r}
+write.table(significant_results, "sign-padj-20min-bacillus_bis.txt")
+
+```
+
+
+Now compare at 120min
+
+```{r}
+sample_res <- results(sample_dds, contrast = c("Type", "mir-120", "scrb-120")) 
+```
+
+Save the results to a table
+```{r}
+res <- data.frame(sample_res)
+res_120 <- summary(res)
+annotations <- read_excel("D:/Home/hmiddleton/Documents/Transcriptomics/resultats_bruts_transcripto/bacillus_genome123/export/annotations.xlsx")
+res_gene <- merge(x=res, y=annotations, by.x=0, by.y="gene_id")
+
+write.table(res_gene, "DESeq-results-120min-bacillus_bis.txt")
+```
+
+Filtering to find significant genes using padj cutoff of 0.05
+```{r}
+padj.cutoff <- 0.05 
+significant_results <- res_gene[which(res_gene$padj < padj.cutoff),]
+```
+
+Save results using customized file_name
+```{r}
+write.table(significant_results, "sign-padj-120min-bacillus_bis.txt")
+
+```
+
+
+
+### Make Euler Diagram to show common differentially expressed genes (DEGs) between conditions ###
+
+```{r}
+#install.packages("eulerr")
+library(eulerr)
+```
+
+Select the DEGs result files for comparison
+```{r}
+File20 <- file.choose() #Select the 1st DEGs result, mir-20 vs scrb-20
+File120 <- file.choose() #Select the 1st DEGs result, mir-120 vs scrb-120
+
+DEGs_20 <- read.csv(File20, header = TRUE)
+DEGs_120 <- read.csv(File120, header = TRUE)
+```
+
+
+Define a function to get significant DEGs
+```{r}
+sig_DEGs <- function(DEGs){
+  df <- data.frame(DEGs)
+  sig_gene_df = subset(df, padj < 0.05) #initially was p-adj
+  sig_gene_df = subset(sig_gene_df, baseMean > 10)
+  sig_gene_df = subset(sig_gene_df, abs(log2FoldChange) > 1.5)
+  return(sig_gene_df$X)
+}
+```
+
+Get significant DEGs
+```{r}
+A <- sig_DEGs(DEGs_20)
+B <- sig_DEGs(DEGs_120)
+```
+
+Get the intersection and difference of A and B
+```{r}
+AnotB <-setdiff(A, B)
+BnotA <-setdiff(B,A)
+AandB <-intersect(A, B)
+
+eulerplot <-euler(c("20min"=length(AnotB), 
+                    "120min"=length(BnotA), 
+                    "20min&120min"=length(AandB))
+                  )
+```
+
+
+# https://rdrr.io/cran/eulerr/man/plot.euler.html
+# https://cran.r-project.org/web/packages/eulerr/vignettes/gallery.html
+```{r}
+plot(eulerplot, 
+     main = "Common DEGs",
+     quantities = list(type = "counts"),
+     edges = c("blue", "red"),
+     fills = c("white", "white"),
+     lwd = 4,
+     legend = list(side = "right"))
+```
+
+ ### Volcano plots ###
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+```
+
+
+Data loading and pre-processing
+Select the DEGs result files for comparison
+```{r}
+File <- file.choose() 
+DEGs <- read.csv(File, header = TRUE)
+
+res <- data.frame(DEGs)
+res$Symbol <- res$X
+```
+
+Label genes on volcano plot
+
+Set cutoff for log2FoldChange for label
+```{r}
+FC_neg_cutoff = -1.5 # Genes with log2FoldChange less than this value will be labeled
+FC_pos_cutoff = 1.5 # Genes with log2FoldChange more than this value will be labeled
+title = "Volcano Plot DEGs 20min"
+```
+
+Label a certain sets of genes, change gene symbols based on need, in makeVolcanoPlot function
+```{r}
+makeVolcanoPlot <- function(res,FC_neg_cutoff, FC_pos_cutoff, title, geneList){
+  # Set threshold to have different color for different sets of genes
+  res <- res %>% mutate(threshold = ifelse(padj<=0.050 & abs(log2FoldChange)>=1.5,"A", ifelse(padj>0.05 & abs(log2FoldChange)<1.5, "B", "C")))
+    
+  ## Two ways to label desired genes (run only one of them: we used n°1)
+  # 1. Only label genes based on the cutoffs
+  res$Label <- ifelse(res$log2FoldChange < FC_neg_cutoff & res$padj < 0.05 | res$log2FoldChange > FC_pos_cutoff & res$padj < 0.05, res$Symbol, "")
+  
+  # 2. Only label genes based on pre-defined gene list (Run either cutoff or pre-defined gene list)
+  #res$Label <- ifelse(res$Symbol %in% geneList, res$Symbol, "")
+  
+  # Define plotting function, adjust parameters based on need
+  ggplot(res, aes(log2FoldChange, -log10(padj), label = Label))+
+    # Set color for different data points
+    geom_point(aes(colour = threshold), size =2, alpha = 0.4) +
+    scale_colour_manual(values = c("A"="red", "B"="grey", "C"="darkgreen"))+
+    # Avoid text overlap
+    geom_text_repel(box.padding = 0.5, max.overlaps = Inf)+
+    # Set theme of the plot
+    theme_bw()+
+    xlim(c(-5,5))+ # x-axis range, adjust based on need
+    ylim(c(0,5))+ # y-axis range,adjust based on need
+    geom_vline(xintercept = c(-1.5, 1.5), lty=2,col="black",lwd=0.6)+ # Draw horizontal dash line
+    geom_hline(yintercept = 1.301, lty=2,col="black",lwd=0.6)+ # Draw vertical dash line
+    xlab(bquote(~Log[2]~ 'fold change'))+ # x-axis label
+    ylab(bquote(~-Log[10]~ 'padj')) + # y-axis label
+    theme(axis.text = element_text(color = "black", size = 10))+ # Font type and size
+    ggtitle(title) # Add title
+}
+
+makeVolcanoPlot(res,FC_neg_cutoff, FC_pos_cutoff, title, geneList)
+```
+
+
+ Preview of the volcano plot, helps define some parameters quickly
+Make an enhanced version of the volcano plot (https://bioconductor.org/packages/release/bioc/vignettes/EnhancedVolcano/inst/doc/EnhancedVolcano.html)
+
+```{r}
+#BiocManager::install('EnhancedVolcano')
+library(EnhancedVolcano)
+EnhancedVolcano(res, lab = res$Symbol,
+                x = 'log2FoldChange', y = 'padj',
+                pCutoff = 0.05, FCcutoff = 1.5, 
+                pointSize =3, labSize = 4)
+  
+```
+
+
+
