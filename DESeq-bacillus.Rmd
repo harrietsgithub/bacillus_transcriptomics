@@ -1,4 +1,4 @@
-Links for original code sources are indicated when needed.
+Links for original code sources are indicated when needed...
 
 This code allows analysis of transcriptomics data (a table of gene counts per sample), resulting in a list of differentially expressed genes (DEGs). From these lists, volcano plots and Euler diagrams were created.
 
